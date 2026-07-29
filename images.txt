@@ -14,5 +14,5 @@
 
 #--platform=linux/amd64 snowdreamtech/frpc:latest
 
---platform=linux/amd64 passwall/passwall-server:latest
+--platform=linux/amd64 postgres:17-alpine
 
