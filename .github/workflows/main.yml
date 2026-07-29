@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       docker_image:
-        description: 要拉取的Docker镜像全称 例: nginx:alpine
+        description:  nginx:alpine
         required: true
         default: nginx:latest
       archive_name:
