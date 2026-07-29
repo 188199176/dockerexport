@@ -1,0 +1,71 @@
+name: Pull Docker Image & Export To Release
+
+# 触发方式二选一：
+# 1. 手动点击工作流运行（推荐）
+on:
+  workflow_dispatch:
+    inputs:
+      docker_image:
+        description: 要拉取的Docker镜像全称 例: nginx:alpine
+        required: true
+        default: nginx:latest
+      archive_name:
+        description: 导出压缩包名称（不带后缀）
+        required: true
+        default: docker-image
+
+# 可选：打tag标签时自动发布（需要打开就取消下面注释）
+# push:
+#   tags:
+#     - 'v*'
+
+permissions:
+  contents: write       # 读写仓库内容
+  releases: write        # 权限：创建、编辑Release
+  packages: write
+
+jobs:
+  save-image-to-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库代码
+        uses: actions/checkout@v4
+
+      - name: 配置Docker环境
+        uses: docker/setup-buildx-action@v3
+
+      - name: 拉取目标Docker镜像
+        run: |
+          docker pull ${{ github.event.inputs.docker_image }}
+
+      - name: 导出镜像为tar归档文件
+        run: |
+          docker save ${{ github.event.inputs.docker_image }} -o ${{ github.event.inputs.archive_name }}.tar
+          # 可选：gzip压缩减小体积
+          gzip ${{ github.event.inputs.archive_name }}.tar
+
+      - name: 获取版本号（tag触发时读取tag，手动运行默认latest）
+        id: get_version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION=latest
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: 创建/更新Release并上传镜像包
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: Docker Image ${{ env.VERSION }}
+          body: |
+            自动打包上传Docker镜像文件
+            镜像源：${{ github.event.inputs.docker_image }}
+            打包时间：${{ github.sha }}
+          files: |
+            ${{ github.event.inputs.archive_name }}.tar.gz
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
