@@ -20,7 +20,6 @@ jobs:
         df -hT
         echo "=============================================================================="
 
-    # 增加可用磁盘空间（保留原逻辑，大镜像必备）
     - name: Maximize build space
       uses: easimon/maximize-build-space@master
       with:
@@ -46,11 +45,10 @@ jobs:
     - name: Docker Setup Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: 批量拉取镜像并导出tar包
+    - name: Pull images in bulk and export as tar packages
       run: |
         mkdir -p output
         
-        # 数据预处理,判断镜像是否重名
         declare -A duplicate_images
         declare -A temp_map
         while IFS= read -r line || [ -n "$line" ]; do
@@ -76,7 +74,6 @@ jobs:
             fi       
         done < images.txt
         
-        # 逐个拉取、导出、清理
         while IFS= read -r line || [ -n "$line" ]; do
             [[ -z "$line" ]] && continue
             if echo "$line" | grep -q '^\s*#'; then
@@ -108,14 +105,13 @@ jobs:
             fi
             
             image_name_tag="${image_name_tag%%@*}"
-            # 构造导出文件名（替换斜杠为下划线，避免路径问题）
             safe_name="${platform_prefix}${name_space_prefix}${image_name_tag}"
             safe_name="${safe_name//\//_}"
             
-            echo "导出镜像: $safe_name.tar.gz"
+            echo "Export images: $safe_name.tar.gz"
             docker save $image | gzip > output/$safe_name.tar.gz
             
-            echo "清理镜像释放空间"
+            echo "Remove Docker images for disk space release"
             docker rmi $image
             echo "=============================================================================="
             df -hT
@@ -123,21 +119,20 @@ jobs:
             
         done < images.txt
         
-        echo "全部镜像导出完成，文件清单："
+        echo "All images exported successfully. File list:"
         ls -lh output/
 
-    - name: 生成版本号
+    - name: Generate Version
       id: set_ver
       run: echo "VERSION=v$(date +%Y%m%d-%H%M)" >> $GITHUB_ENV
 
-    - name: 创建Release并上传所有镜像包
+    - name: Create GitHub Release & upload all image archives
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ env.VERSION }}
         name: Docker镜像打包 ${{ env.VERSION }}
         body: |
           自动批量导出Docker镜像
-          镜像清单见仓库 images.txt
           打包时间：${{ env.VERSION }}
         files: output/*.tar.gz
         draft: false
