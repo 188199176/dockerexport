@@ -13,3 +13,5 @@
 --platform=linux/amd64 mzz2017/v2raya:latest
 
 --platform=linux/amd64 snowdreamtech/frpc:latest
+
+
