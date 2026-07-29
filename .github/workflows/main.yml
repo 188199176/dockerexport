@@ -1,71 +1,146 @@
-name: Pull Docker Image & Export To Release
+name: Docker镜像批量导出到Release
 
-# 触发方式二选一：
-# 1. 手动点击工作流运行（推荐）
 on:
   workflow_dispatch:
-    inputs:
-      docker_image:
-        description:  nginx:alpine
-        required: true
-        default: nginx:latest
-      archive_name:
-        description: 导出压缩包名称（不带后缀）
-        required: true
-        default: docker-image
-
-# 可选：打tag标签时自动发布（需要打开就取消下面注释）
-# push:
-#   tags:
-#     - 'v*'
+  push:
+    branches: [ main ]
 
 permissions:
-  contents: write       # 读写仓库内容
-  releases: write        # 权限：创建、编辑Release
-  packages: write
+  contents: write
+  releases: write
 
 jobs:
-  save-image-to-release:
+  build:
+    name: Pull & Export
     runs-on: ubuntu-latest
     steps:
-      - name: 检出仓库代码
-        uses: actions/checkout@v4
+    - name: Before freeing up disk space
+      run: |
+        echo "Before freeing up disk space"
+        echo "=============================================================================="
+        df -hT
+        echo "=============================================================================="
 
-      - name: 配置Docker环境
-        uses: docker/setup-buildx-action@v3
+    # 增加可用磁盘空间（保留原逻辑，大镜像必备）
+    - name: Maximize build space
+      uses: easimon/maximize-build-space@master
+      with:
+        root-reserve-mb: 2048
+        swap-size-mb: 128
+        remove-dotnet: 'true'
+        remove-haskell: 'true'
+        build-mount-path: '/var/lib/docker/'
 
-      - name: 拉取目标Docker镜像
-        run: |
-          docker pull ${{ github.event.inputs.docker_image }}
+    - name: Restart docker
+      run: sudo service docker restart
 
-      - name: 导出镜像为tar归档文件
-        run: |
-          docker save ${{ github.event.inputs.docker_image }} -o ${{ github.event.inputs.archive_name }}.tar
-          # 可选：gzip压缩减小体积
-          gzip ${{ github.event.inputs.archive_name }}.tar
+    - name: Free up disk space complete
+      run: |
+        echo "Free up disk space complete"
+        echo "=============================================================================="
+        df -hT
+        echo "=============================================================================="
 
-      - name: 获取版本号（tag触发时读取tag，手动运行默认latest）
-        id: get_version
-        run: |
-          if [[ $GITHUB_REF == refs/tags/* ]]; then
-            VERSION=${GITHUB_REF#refs/tags/}
-          else
-            VERSION=latest
-          fi
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
+    - name: Checkout Code
+      uses: actions/checkout@v4
 
-      - name: 创建/更新Release并上传镜像包
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.VERSION }}
-          name: Docker Image ${{ env.VERSION }}
-          body: |
-            自动打包上传Docker镜像文件
-            镜像源：${{ github.event.inputs.docker_image }}
-            打包时间：${{ github.sha }}
-          files: |
-            ${{ github.event.inputs.archive_name }}.tar.gz
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Docker Setup Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: 批量拉取镜像并导出tar包
+      run: |
+        mkdir -p output
+        
+        # 数据预处理,判断镜像是否重名
+        declare -A duplicate_images
+        declare -A temp_map
+        while IFS= read -r line || [ -n "$line" ]; do
+            [[ -z "$line" ]] && continue
+            if echo "$line" | grep -q '^\s*#'; then
+                continue
+            fi
+            
+            image=$(echo "$line" | awk '{print $NF}')
+            image="${image%%@*}"
+            image_name_tag=$(echo "$image" | awk -F'/' '{print $NF}')
+            name_space=$(echo "$image" | awk -F'/' '{if (NF==3) print $2; else if (NF==2) print $1; else print ""}')
+            name_space="${name_space}_"
+            image_name=$(echo "$image_name_tag" | awk -F':' '{print $1}')
+            
+            if [[ -n "${temp_map[$image_name]}" ]]; then
+                 if [[ "${temp_map[$image_name]}" != $name_space  ]]; then
+                    echo "duplicate image name: $image_name"
+                    duplicate_images[$image_name]="true"
+                 fi
+            else
+                temp_map[$image_name]=$name_space
+            fi       
+        done < images.txt
+        
+        # 逐个拉取、导出、清理
+        while IFS= read -r line || [ -n "$line" ]; do
+            [[ -z "$line" ]] && continue
+            if echo "$line" | grep -q '^\s*#'; then
+                continue
+            fi
+        
+            echo "docker pull $line"
+            docker pull $line
+            platform=$(echo "$line" | awk -F'--platform[ =]' '{if (NF>1) print $2}' | awk '{print $1}')
+            echo "platform is $platform"
+            
+            if [ -z "$platform" ]; then
+                platform_prefix=""
+            else
+                platform_prefix="${platform//\//_}_"
+            fi
+            echo "platform_prefix is $platform_prefix"
+            
+            image=$(echo "$line" | awk '{print $NF}')
+            image_name_tag=$(echo "$image" | awk -F'/' '{print $NF}')
+            name_space=$(echo "$image" | awk -F'/' '{if (NF==3) print $2; else if (NF==2) print $1; else print ""}')
+            image_name=$(echo "$image_name_tag" | awk -F':' '{print $1}')
+        
+            name_space_prefix=""
+            if [[ -n "${duplicate_images[$image_name]}" ]]; then
+               if [[ -n "${name_space}" ]]; then
+                  name_space_prefix="${name_space}_"
+               fi
+            fi
+            
+            image_name_tag="${image_name_tag%%@*}"
+            # 构造导出文件名（替换斜杠为下划线，避免路径问题）
+            safe_name="${platform_prefix}${name_space_prefix}${image_name_tag}"
+            safe_name="${safe_name//\//_}"
+            
+            echo "导出镜像: $safe_name.tar.gz"
+            docker save $image | gzip > output/$safe_name.tar.gz
+            
+            echo "清理镜像释放空间"
+            docker rmi $image
+            echo "=============================================================================="
+            df -hT
+            echo "=============================================================================="     
+            
+        done < images.txt
+        
+        echo "全部镜像导出完成，文件清单："
+        ls -lh output/
+
+    - name: 生成版本号
+      id: set_ver
+      run: echo "VERSION=v$(date +%Y%m%d-%H%M)" >> $GITHUB_ENV
+
+    - name: 创建Release并上传所有镜像包
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ env.VERSION }}
+        name: Docker镜像打包 ${{ env.VERSION }}
+        body: |
+          自动批量导出Docker镜像
+          镜像清单见仓库 images.txt
+          打包时间：${{ env.VERSION }}
+        files: output/*.tar.gz
+        draft: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
