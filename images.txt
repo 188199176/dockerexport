@@ -14,5 +14,5 @@
 
 #--platform=linux/amd64 snowdreamtech/frpc:latest
 
---platform=linux/amd64 dreamacro/clash:latest
+--platform=linux/amd64 laoyutang/clash-and-dashboard:latest
 
