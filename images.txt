@@ -14,5 +14,5 @@
 
 #--platform=linux/amd64 snowdreamtech/frpc:latest
 
---platform=linux/amd64 pakro888/passwall:latest
+--platform=linux/amd64 dreamacro/clash:latest
 
