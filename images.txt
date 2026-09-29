@@ -14,5 +14,4 @@
 
 #--platform=linux/amd64 snowdreamtech/frpc:latest
 
---platform=linux/amd64 laoyutang/clash-and-dashboard:latest
-
+--platform=linux/amd64 linuxserver/qbittorrent:5.2.0
